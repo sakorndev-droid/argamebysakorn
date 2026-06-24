@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>AR เก็บขยะแยกประเภท</title>
+<title>AR เกมแยกขยะด้วยมือจริง (Hand Tracking)</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; touch-action: none; }
@@ -13,21 +15,7 @@
     width: 100%; height: 100%;
     object-fit: cover;
     z-index: 0;
-    transform: scaleX(-1);
-  }
-
-  #no-camera {
-    position: fixed; inset: 0;
-    background: linear-gradient(135deg, #1a3a2a 0%, #0d2018 50%, #1a2a3a 100%);
-    z-index: 0;
-    display: none;
-  }
-  #no-camera .grid {
-    position: absolute; inset: 0;
-    background-image: 
-      linear-gradient(rgba(0,200,100,0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,200,100,0.05) 1px, transparent 1px);
-    background-size: 40px 40px;
+    transform: scaleX(-1); /* กลับกระจกกล้องเพื่อให้ซ้ายขวาตรงกับมือจริงของเรา */
   }
 
   #game-canvas {
@@ -37,231 +25,98 @@
     pointer-events: none;
   }
 
-  #ui-layer {
-    position: fixed; inset: 0;
-    z-index: 20;
-    pointer-events: none;
+  /* วงกลมชี้พิกัดปลายนิ้วชี้ */
+  #hand-pointer {
+    position: fixed; width: 24px; height: 24px;
+    background: rgba(0, 255, 136, 0.6);
+    border: 3px solid #fff; border-radius: 50%;
+    box-shadow: 0 0 15px #00ff88;
+    z-index: 999; pointer-events: none;
+    transform: translate(-50%, -50%);
+    display: none;
   }
 
+  #ui-layer { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
   #hud {
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    padding: 12px 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
-    pointer-events: all;
+    position: absolute; top: 0; left: 0; right: 0; padding: 16px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent); pointer-events: all;
   }
-
-  #score-box { display: flex; flex-direction: column; align-items: flex-start; }
+  #score-box { display: flex; flex-direction: column; }
   #score-label { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 1px; text-transform: uppercase; }
-  #score-val { font-size: 32px; font-weight: 700; color: #fff; line-height: 1; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
-
+  #score-val { font-size: 32px; font-weight: 700; color: #fff; line-height: 1; }
   #lives-box { display: flex; gap: 6px; align-items: center; padding-top: 6px; }
   .life-icon { font-size: 22px; transition: transform 0.3s; }
   .life-icon.lost { opacity: 0.2; transform: scale(0.8); }
-
   #timer-box { display: flex; flex-direction: column; align-items: center; }
-  #timer-label { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 1px; text-transform: uppercase; }
-  #timer-val { font-size: 32px; font-weight: 700; color: #fff; line-height: 1; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
-  #timer-val.warning { color: #ff6b6b; animation: pulse 0.5s infinite alternate; }
-
-  #level-badge {
-    background: rgba(255,255,255,0.15);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255,255,255,0.3);
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size: 12px; font-weight: 600; color: #fff;
-    align-self: center;
-  }
+  #timer-label { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 1px; }
+  #timer-val { font-size: 32px; font-weight: 700; color: #fff; line-height: 1; }
 
   #bins-bar {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    padding: 0 8px 16px;
-    display: flex;
-    justify-content: space-around;
-    align-items: flex-end;
-    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
-    pointer-events: all;
+    position: absolute; bottom: 0; left: 0; right: 0; padding: 0 8px 20px;
+    display: flex; justify-content: space-around; align-items: flex-end;
+    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent); pointer-events: all;
   }
-
-  .bin {
-    display: flex; flex-direction: column; align-items: center;
-    cursor: pointer;
-    transition: transform 0.15s;
-    min-width: 60px;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .bin:active { transform: scale(0.92); }
-  .bin.highlight { animation: binPulse 0.4s ease-out; }
+  .bin { display: flex; flex-direction: column; align-items: center; transition: transform 0.15s; min-width: 70px; }
   .bin.correct-flash { animation: correctFlash 0.4s ease-out; }
   .bin.wrong-flash { animation: wrongFlash 0.4s ease-out; }
-
-  .bin-icon { font-size: 42px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5)); transition: transform 0.15s; }
-  .bin-label { font-size: 10px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.8); text-align: center; margin-top: 2px; letter-spacing: 0.5px; }
-  .bin-count { font-size: 9px; color: rgba(255,255,255,0.6); margin-top: 1px; }
+  .bin-icon { font-size: 46px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5)); }
+  .bin-label { font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.8); margin-top: 2px; }
+  .bin-count { font-size: 11px; color: rgba(255,255,255,0.6); }
 
   #active-item-panel {
-    position: absolute;
-    bottom: 110px; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 20px;
-    padding: 10px 24px;
-    display: flex; align-items: center; gap: 10px;
-    pointer-events: none;
-    transition: opacity 0.3s;
-    white-space: nowrap;
+    position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 10px 24px;
+    display: flex; align-items: center; gap: 10px; transition: opacity 0.3s; white-space: nowrap;
   }
   #active-item-panel.hidden { opacity: 0; }
   #active-emoji { font-size: 28px; }
   #active-name { font-size: 14px; font-weight: 600; color: #fff; }
-  #active-hint { font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+  #active-hint { font-size: 11px; color: rgba(255,255,255,0.6); }
 
   .trash-item {
-    position: absolute;
-    cursor: grab;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-    transform-origin: center;
-    font-size: 40px;
-    line-height: 1;
-    text-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    transition: filter 0.1s;
-    pointer-events: all;
-    touch-action: none;
+    position: absolute; cursor: grab; user-select: none; transform-origin: center;
+    font-size: 45px; line-height: 1; text-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    pointer-events: all; touch-action: none;
   }
-  .trash-item:active { cursor: grabbing; }
-  .trash-item.dragging { filter: drop-shadow(0 0 12px rgba(255,255,255,0.8)); z-index: 100; font-size: 48px; }
+  .trash-item.dragging { filter: drop-shadow(0 0 15px rgba(255,255,255,0.9)); z-index: 100; font-size: 52px; }
   .trash-item.collected { animation: collectOut 0.3s ease-out forwards; }
-  .trash-item.float-anim { animation: floatBob 2s ease-in-out infinite; }
+  .trash-item.float-anim { animation: floatBob 2.5s ease-in-out infinite; }
 
-  .score-popup { position: absolute; font-size: 22px; font-weight: 800; pointer-events: none; animation: scoreFloat 1s ease-out forwards; text-shadow: 0 2px 8px rgba(0,0,0,0.6); z-index: 50; }
+  .score-popup { position: absolute; font-size: 26px; font-weight: 800; animation: scoreFloat 1s ease-out forwards; text-shadow: 0 2px 8px rgba(0,0,0,0.6); z-index: 50; }
 
-  #combo-display {
-    position: absolute;
-    top: 100px; left: 50%; transform: translateX(-50%);
-    font-size: 28px; font-weight: 900;
-    color: #FFD700;
-    text-shadow: 0 0 20px rgba(255,215,0,0.8), 0 2px 8px rgba(0,0,0,0.6);
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.3s;
-    white-space: nowrap;
-  }
-  #combo-display.show { opacity: 1; animation: comboAnim 0.5s ease-out; }
-
-  .screen {
-    position: fixed; inset: 0;
-    z-index: 100;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.85);
-    backdrop-filter: blur(10px);
-    padding: 24px;
-    text-align: center;
-  }
+  .screen { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); padding: 24px; text-align: center; }
   .screen.hidden { display: none; }
+  .screen h1 { font-size: 32px; color: #fff; margin-bottom: 12px; }
+  .screen p { font-size: 15px; color: rgba(255,255,255,0.7); max-width: 340px; margin-bottom: 24px; line-height: 1.5; }
+  .btn-primary { background: linear-gradient(135deg, #00c853, #00897b); color: #fff; border: none; padding: 16px 48px; border-radius: 50px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 20px rgba(0,200,83,0.4); }
+  
+  .cam-status { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); font-size: 13px; color: #fff; background: rgba(0,0,0,0.75); padding: 8px 16px; border-radius: 20px; z-index: 99; border: 1px solid rgba(255,255,255,0.1); }
 
-  .screen h1 { font-size: 36px; font-weight: 900; color: #fff; text-shadow: 0 2px 20px rgba(0,200,100,0.5); margin-bottom: 8px; }
-  .screen h2 { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 12px; }
-  .screen p { font-size: 14px; color: rgba(255,255,255,0.7); max-width: 320px; line-height: 1.6; margin-bottom: 16px; }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #00c853, #00897b);
-    color: #fff; border: none;
-    padding: 16px 48px;
-    border-radius: 50px;
-    font-size: 18px; font-weight: 700;
-    cursor: pointer;
-    transition: transform 0.1s, box-shadow 0.2s;
-    box-shadow: 0 4px 20px rgba(0,200,83,0.4);
-    margin: 8px;
-    touch-action: manipulation;
-  }
-  .btn-primary:active { transform: scale(0.96); }
-
-  .btn-secondary {
-    background: rgba(255,255,255,0.1);
-    color: #fff; border: 1px solid rgba(255,255,255,0.3);
-    padding: 12px 36px;
-    border-radius: 50px;
-    font-size: 15px; font-weight: 600;
-    cursor: pointer;
-    margin: 8px;
-    touch-action: manipulation;
-  }
-  .btn-secondary:active { background: rgba(255,255,255,0.2); }
-
-  .big-emoji { font-size: 72px; margin-bottom: 16px; }
-  .score-final { font-size: 52px; font-weight: 900; color: #FFD700; margin: 8px 0; text-shadow: 0 0 20px rgba(255,215,0,0.5); }
-  .score-final-label { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 20px; }
-
-  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 280px; margin: 12px auto; }
-  .stat-card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 10px; }
-  .stat-val { font-size: 22px; font-weight: 800; color: #fff; }
-  .stat-lbl { font-size: 10px; color: rgba(255,255,255,0.5); letter-spacing: 0.5px; margin-top: 2px; }
-
-  .guide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; width: 100%; max-width: 340px; }
-  .guide-bin { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 8px; display: flex; flex-direction: column; align-items: center; }
-  .guide-bin .g-emoji { font-size: 32px; margin-bottom: 4px; }
-  .guide-bin .g-name { font-size: 12px; font-weight: 700; color: #fff; margin-bottom: 4px; }
-  .guide-bin .g-items { font-size: 10px; color: rgba(255,255,255,0.6); line-height: 1.5; }
-
-  .cam-status { position: absolute; top: 16px; right: 16px; font-size: 11px; color: rgba(255,255,255,0.5); background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 12px; z-index: 25; }
-
-  @keyframes floatBob { 0%, 100% { transform: translateY(0px) rotate(-3deg); } 50% { transform: translateY(-8px) rotate(3deg); } }
-  @keyframes collectOut { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(2.5); opacity: 0; } }
-  @keyframes scoreFloat { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-60px); opacity: 0; } }
-  @keyframes comboAnim { 0% { transform: translateX(-50%) scale(0.5); } 60% { transform: translateX(-50%) scale(1.2); } 100% { transform: translateX(-50%) scale(1); } }
-  @keyframes pulse { from { opacity: 1; } to { opacity: 0.5; } }
-  @keyframes binPulse { 0% { transform: scale(1); } 40% { transform: scale(1.2); } 100% { transform: scale(1); } }
-  @keyframes correctFlash { 0% { filter: drop-shadow(0 0 0 rgba(0,255,100,0)); } 40% { filter: drop-shadow(0 0 20px rgba(0,255,100,1)); } 100% { filter: drop-shadow(0 0 0 rgba(0,255,100,0)); } }
-  @keyframes wrongFlash { 0% { filter: drop-shadow(0 0 0 rgba(255,50,50,0)); } 40% { filter: drop-shadow(0 0 20px rgba(255,50,50,1)); } 100% { filter: drop-shadow(0 0 0 rgba(255,50,50,0)); } }
-  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
-  .screen > * { animation: slideUp 0.4s ease-out backwards; }
-  .screen > *:nth-child(1) { animation-delay: 0.05s; }
-  .screen > *:nth-child(2) { animation-delay: 0.1s; }
-  .screen > *:nth-child(3) { animation-delay: 0.15s; }
-  .screen > *:nth-child(4) { animation-delay: 0.2s; }
-  .screen > *:nth-child(5) { animation-delay: 0.25s; }
-
-  @media (max-height: 600px) {
-    .big-emoji { font-size: 48px; margin-bottom: 8px; }
-    .screen h1 { font-size: 28px; }
-    .bin-icon { font-size: 34px; }
-  }
+  @keyframes floatBob { 0%, 100% { transform: translateY(0px) rotate(-3deg); } 50% { transform: translateY(-10px) rotate(3deg); } }
+  @keyframes collectOut { 100% { transform: scale(2); opacity: 0; } }
+  @keyframes scoreFloat { 100% { transform: translateY(-70px); opacity: 0; } }
+  @keyframes correctFlash { 40% { filter: drop-shadow(0 0 25px rgba(0,255,100,1)); } }
+  @keyframes wrongFlash { 40% { filter: drop-shadow(0 0 25px rgba(255,50,50,1)); } }
 </style>
 </head>
 <body>
 
 <video id="camera-bg" autoplay playsinline muted></video>
-<div id="no-camera"><div class="grid"></div></div>
-<div id="cam-status" class="cam-status">📷 กำลังเปิดกล้อง...</div>
+<div id="cam-status" class="cam-status">⏳ กำลังเชื่อมต่อกล้องและโหลดระบบ AI แยกแยะมือ...</div>
+<div id="hand-pointer"></div>
 <div id="game-canvas"></div>
 
 <div id="ui-layer">
   <div id="hud">
-    <div id="score-box">
-      <div id="score-label">คะแนน</div>
-      <div id="score-val">0</div>
-    </div>
-    <div id="level-badge">ด่าน 1</div>
+    <div id="score-box"><div id="score-label">คะแนน</div><div id="score-val">0</div></div>
+    <div style="font-size: 16px; color: #fff; font-weight: bold; background: rgba(255,255,255,0.1); padding: 4px 12px; border-radius: 12px;" id="level-badge">ด่าน 1</div>
     <div>
       <div id="lives-box">
-        <span class="life-icon">❤️</span>
-        <span class="life-icon">❤️</span>
-        <span class="life-icon">❤️</span>
+        <span class="life-icon">❤️</span><span class="life-icon">❤️</span><span class="life-icon">❤️</span>
       </div>
-      <div id="timer-box" style="text-align:center; margin-top:4px;">
-        <div id="timer-label">เวลา</div>
-        <div id="timer-val">60</div>
+      <div id="timer-box">
+        <div id="timer-label">เวลา</div><div id="timer-val">60</div>
       </div>
     </div>
   </div>
@@ -270,546 +125,139 @@
     <div id="active-emoji">🗑️</div>
     <div>
       <div id="active-name">ขยะ</div>
-      <div id="active-hint">ลากไปใส่ถังที่ถูกต้อง</div>
+      <div id="active-hint">ใช้ปลายนิ้วชี้แตะค้างเพื่อลากหยิบ</div>
     </div>
   </div>
 
-  <div id="combo-display">🔥 COMBO x3</div>
-
   <div id="bins-bar">
-    <div class="bin" data-type="recycle" onclick="onBinTap('recycle')">
-      <div class="bin-icon">♻️</div>
-      <div class="bin-label">รีไซเคิล</div>
-      <div class="bin-count" id="count-recycle">0</div>
+    <div class="bin" data-type="recycle">
+      <div class="bin-icon">♻️</div><div class="bin-label">รีไซเคิล</div><div class="bin-count" id="count-recycle">0</div>
     </div>
-    <div class="bin" data-type="organic" onclick="onBinTap('organic')">
-      <div class="bin-icon">🌿</div>
-      <div class="bin-label">เศษอาหาร</div>
-      <div class="bin-count" id="count-organic">0</div>
+    <div class="bin" data-type="organic">
+      <div class="bin-icon">🌿</div><div class="bin-label">เศษอาหาร</div><div class="bin-count" id="count-organic">0</div>
     </div>
-    <div class="bin" data-type="hazard" onclick="onBinTap('hazard')">
-      <div class="bin-icon">☣️</div>
-      <div class="bin-label">อันตราย</div>
-      <div class="bin-count" id="count-hazard">0</div>
+    <div class="bin" data-type="hazard">
+      <div class="bin-icon">☣️</div><div class="bin-label">อันตราย</div><div class="bin-count" id="count-hazard">0</div>
     </div>
-    <div class="bin" data-type="general" onclick="onBinTap('general')">
-      <div class="bin-icon">🗑️</div>
-      <div class="bin-label">ทั่วไป</div>
-      <div class="bin-count" id="count-general">0</div>
+    <div class="bin" data-type="general">
+      <div class="bin-icon">🗑️</div><div class="bin-label">ทั่วไป</div><div class="bin-count" id="count-general">0</div>
     </div>
   </div>
 </div>
 
 <div id="screen-start" class="screen">
-  <div class="big-emoji">♻️</div>
-  <h1>AR เก็บขยะ</h1>
-  <p>เก็บขยะที่ลอยในกล้องแล้วลากใส่ถังให้ถูกประเภท รักษาโลกสีเขียว! 🌍</p>
-  <div class="guide-grid">
-    <div class="guide-bin">
-      <div class="g-emoji">♻️</div>
-      <div class="g-name">รีไซเคิล</div>
-      <div class="g-items">ขวดแก้ว 🍾<br>กระดาษ 📰<br>กระป๋อง 🥫</div>
-    </div>
-    <div class="guide-bin">
-      <div class="g-emoji">🌿</div>
-      <div class="g-name">เศษอาหาร</div>
-      <div class="g-items">แอปเปิ้ล 🍎<br>เปลือกผลไม้ 🍌<br>เศษผัก 🥦</div>
-    </div>
-    <div class="guide-bin">
-      <div class="g-emoji">☣️</div>
-      <div class="g-name">อันตราย</div>
-      <div class="g-items">ถ่าน 🔋<br>ยา 💊<br>หลอดไฟ 💡</div>
-    </div>
-    <div class="guide-bin">
-      <div class="g-emoji">🗑️</div>
-      <div class="g-name">ทั่วไป</div>
-      <div class="g-items">โฟม 📦<br>ซองขนม 🍟<br>ถุงพลาสติก 🛍️</div>
-    </div>
-  </div>
-  <button class="btn-primary" onclick="startGame()">🎮 เริ่มเล่น</button>
-  <button class="btn-secondary" onclick="requestCamera()">📷 ขอใช้กล้อง</button>
-</div>
-
-<div id="screen-levelup" class="screen hidden">
-  <div class="big-emoji">⭐</div>
-  <h2>ผ่านด่านแล้ว!</h2>
-  <div id="levelup-text" style="font-size:20px; color:#FFD700; font-weight:800; margin:8px 0;"></div>
-  <p>ขยะเพิ่มขึ้นและเร็วกว่าเดิม!</p>
-  <button class="btn-primary" onclick="nextLevel()">ด่านต่อไป →</button>
+  <div style="font-size:65px; margin-bottom:15px;">🌍</div>
+  <h1>AR เกมแยกขยะด้วยมือจริง</h1>
+  <p>ยกมือขึ้นส่องหน้ากล้อง แล้วใช้<b>ปลายนิ้วชี้</b>เล็งไปแตะค้างที่วัตถุขยะเพื่อลากลงมาใส่ถังด้านล่างให้ถูกต้อง!</p>
+  <button class="btn-primary" onclick="startGame()">🎮 เริ่มเล่นเกม</button>
 </div>
 
 <div id="screen-gameover" class="screen hidden">
-  <div class="big-emoji" id="gameover-emoji">😔</div>
-  <h2 id="gameover-title">หมดเวลา!</h2>
-  <div class="score-final" id="final-score">0</div>
-  <div class="score-final-label">คะแนนรวม</div>
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-val" id="stat-correct">0</div>
-      <div class="stat-lbl">ถูกต้อง ✅</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-val" id="stat-wrong">0</div>
-      <div class="stat-lbl">ผิด ❌</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-val" id="stat-level">1</div>
-      <div class="stat-lbl">ด่านสูงสุด</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-val" id="stat-combo">0</div>
-      <div class="stat-lbl">Combo สูงสุด</div>
-    </div>
-  </div>
-  <button class="btn-primary" onclick="startGame()">🔄 เล่นใหม่</button>
-  <button class="btn-secondary" onclick="showStart()">🏠 หน้าหลัก</button>
+  <h2 style="font-size:32px; color:#fff; margin-bottom:10px;">จบเกม!</h2>
+  <div style="font-size:54px; color:#FFD700; font-weight:900;" id="final-score">0</div>
+  <p>คะแนนรวมที่คุณแยกขยะสำเร็จ</p>
+  <button class="btn-primary" onclick="startGame()">🔄 เล่นอีกครั้ง</button>
 </div>
 
 <script>
+// ข้อมูลขยะแยกประเภท
 const TRASH_DATA = [
   { id:'bottle', emoji:'🍾', name:'ขวดแก้ว', type:'recycle' },
-  { id:'newspaper', emoji:'📰', name:'หนังสือพิมพ์', type:'recycle' },
-  { id:'can', emoji:'🥫', name:'กระป๋องอาหาร', type:'recycle' },
-  { id:'box', emoji:'📦', name:'กล่องกระดาษ', type:'recycle' },
-  { id:'plasticbottle', emoji:'🧴', name:'ขวดพลาสติก', type:'recycle' },
-  { id:'cup', emoji:'🥤', name:'แก้วพลาสติก', type:'recycle' },
-  { id:'apple', emoji:'🍎', name:'แอปเปิ้ล', type:'organic' },
+  { id:'can', emoji:'🥫', name:'กระป๋อง', type:'recycle' },
+  { id:'apple', emoji:'🍎', name:'เศษแอปเปิ้ล', type:'organic' },
   { id:'banana', emoji:'🍌', name:'เปลือกกล้วย', type:'organic' },
-  { id:'broccoli', emoji:'🥦', name:'ผัก', type:'organic' },
-  { id:'rice', emoji:'🍚', name:'ข้าวเหลือ', type:'organic' },
-  { id:'egg', emoji:'🥚', name:'เปลือกไข่', type:'organic' },
-  { id:'leaf', emoji:'🍂', name:'ใบไม้', type:'organic' },
   { id:'battery', emoji:'🔋', name:'ถ่านไฟฉาย', type:'hazard' },
-  { id:'medicine', emoji:'💊', name:'ยาหมดอายุ', type:'hazard' },
   { id:'bulb', emoji:'💡', name:'หลอดไฟ', type:'hazard' },
-  { id:'paint', emoji:'🎨', name:'สีทาบ้าน', type:'hazard' },
-  { id:'spray', emoji:'🧪', name:'สเปรย์', type:'hazard' },
-  { id:'foam', emoji:'📫', name:'กล่องโฟม', type:'general' },
   { id:'chips', emoji:'🍟', name:'ซองขนม', type:'general' },
-  { id:'bag', emoji:'🛍️', name:'ถุงพลาสติก', type:'general' },
-  { id:'diaper', emoji:'🧻', name:'กระดาษทิชชู่', type:'general' },
   { id:'straw', emoji:'🥢', name:'หลอดดูด', type:'general' }
 ];
 
 let state = {
-  score: 0, lives: 3, timeLeft: 60,
-  level: 1, gameActive: false,
-  combo: 0, maxCombo: 0,
-  correct: 0, wrong: 0,
+  score: 0, lives: 3, timeLeft: 60, gameActive: false,
   binCounts: { recycle:0, organic:0, hazard:0, general:0 },
-  items: [],
-  spawnInterval: null,
-  timerInterval: null,
-  comboTimer: null,
-  selectedItem: null,
-  levelItemsNeeded: 8,
-  levelItemsCollected: 0,
-  dragEl: null, dragItem: null, dragOffX: 0, dragOffY: 0,
-  isDragging: false
+  items: [], selectedItem: null,
+  spawnInterval: null, timerInterval: null,
+  // พิกัดของระบบ AI จับนิ้วมือ
+  handX: 0, handY: 0, isHandPresent: false, handDraggingItem: null
 };
 
-async function requestCamera() {
-  const camStatus = document.getElementById('cam-status');
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    const video = document.getElementById('camera-bg');
-    video.srcObject = stream;
-    video.style.display = 'block';
-    document.getElementById('no-camera').style.display = 'none';
-    camStatus.textContent = '📷 กล้องพร้อม';
-    setTimeout(() => camStatus.style.opacity = '0', 3000);
-  } catch(e) {
-    document.getElementById('camera-bg').style.display = 'none';
-    document.getElementById('no-camera').style.display = 'block';
-    camStatus.textContent = '🚫 ไม่มีกล้อง (โหมดจำลอง)';
-    setTimeout(() => camStatus.style.opacity = '0', 3000);
-  }
-}
+const videoElement = document.getElementById('camera-bg');
+const pointerElement = document.getElementById('hand-pointer');
 
-function showScreen(id) {
-  const screens = ['screen-start', 'screen-levelup', 'screen-gameover'];
-  screens.forEach(s => {
-    const el = document.getElementById(s);
-    if(el) el.classList.add('hidden');
-  });
-  if(id) {
-    const target = document.getElementById(id);
-    if(target) target.classList.remove('hidden');
-  }
-}
+// --- 🤖 ตั้งค่า MediaPipe Hands (AI จับพิกัดข้อมือและนิ้วมือ) ---
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+hands.onResults(onHandResults);
 
-function showStart() {
-  stopGame();
-  showScreen('screen-start');
-}
+function onHandResults(results) {
+  const statusEl = document.getElementById('cam-status');
+  if (statusEl) statusEl.style.display = 'none'; // โหลดเสร็จแล้วให้ซ่อนข้อความเตือน
 
-function updateHUD() {
-  document.getElementById('score-val').textContent = state.score.toLocaleString();
-  document.getElementById('timer-val').textContent = Math.ceil(state.timeLeft);
-  document.getElementById('level-badge').textContent = `ด่าน ${state.level}`;
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    state.isHandPresent = true;
+    pointerElement.style.display = 'block';
 
-  const tv = document.getElementById('timer-val');
-  if(state.timeLeft <= 10) tv.classList.add('warning');
-  else tv.classList.remove('warning');
+    // ดึงพิกัดจุดที่ 8 คือ INDEX_FINGER_TIP (ปลายนิ้วชี้)
+    const indexFinger = results.multiHandLandmarks[0][8]; 
+    
+    // แปลงค่าพิกัด AI (0 ถึง 1) ออกมาเป็นพิกเซลของหน้าจอจริง
+    // ใช้ (1 - indexFinger.x) เพื่อล้อไปกับการสะท้อน Mirror ของกล้อง
+    state.handX = (1 - indexFinger.x) * window.innerWidth;
+    state.handY = indexFinger.y * window.innerHeight;
 
-  const lives = document.querySelectorAll('.life-icon');
-  lives.forEach((l, i) => {
-    l.classList.toggle('lost', i >= state.lives);
-  });
+    // แสดงวงกลมสีเขียวไล่ตามนิ้วชี้
+    pointerElement.style.left = state.handX + 'px';
+    pointerElement.style.top = state.handY + 'px';
 
-  Object.keys(state.binCounts).forEach(t => {
-    const el = document.getElementById('count-'+t);
-    if(el) el.textContent = state.binCounts[t];
-  });
-}
-
-function startGame() {
-  stopGame();
-  showScreen(null);
-
-  state = {
-    ...state,
-    score: 0, lives: 3, timeLeft: 60,
-    level: 1, gameActive: true,
-    combo: 0, maxCombo: 0,
-    correct: 0, wrong: 0,
-    binCounts: { recycle:0, organic:0, hazard:0, general:0 },
-    items: [],
-    selectedItem: null,
-    levelItemsNeeded: 8,
-    levelItemsCollected: 0,
-    spawnInterval: null, timerInterval: null,
-    dragEl: null, dragItem: null, isDragging: false
-  };
-
-  document.getElementById('game-canvas').innerHTML = '';
-  updateHUD();
-  updateActivePanel();
-  startTimer();
-  scheduleSpawn();
-}
-
-function stopGame() {
-  state.gameActive = false;
-  clearInterval(state.spawnInterval);
-  clearInterval(state.timerInterval);
-  clearTimeout(state.comboTimer);
-  document.getElementById('game-canvas').innerHTML = '';
-  state.items = [];
-}
-
-function nextLevel() {
-  state.level++;
-  state.timeLeft = Math.max(45, 75 - state.level * 3);
-  state.levelItemsNeeded = 8 + state.level * 2;
-  state.levelItemsCollected = 0;
-  state.gameActive = true;
-  showScreen(null);
-  clearInterval(state.spawnInterval);
-  clearInterval(state.timerInterval);
-  startTimer();
-  scheduleSpawn();
-  updateHUD();
-}
-
-function startTimer() {
-  state.timerInterval = setInterval(() => {
-    if(!state.gameActive) return;
-    state.timeLeft -= 0.1;
-    updateHUD();
-    if(state.timeLeft <= 0) {
-      state.timeLeft = 0;
-      endGame('timeout');
+    if (state.gameActive) {
+      handleHandInteraction();
     }
-  }, 100);
-}
-
-function endGame(reason) {
-  state.gameActive = false;
-  clearInterval(state.spawnInterval);
-  clearInterval(state.timerInterval);
-  document.getElementById('game-canvas').innerHTML = '';
-
-  document.getElementById('final-score').textContent = state.score.toLocaleString();
-  document.getElementById('stat-correct').textContent = state.correct;
-  document.getElementById('stat-wrong').textContent = state.wrong;
-  document.getElementById('stat-level').textContent = state.level;
-  document.getElementById('stat-combo').textContent = state.maxCombo;
-
-  if(reason === 'timeout') {
-    document.getElementById('gameover-emoji').textContent = '⏰';
-    document.getElementById('gameover-title').textContent = 'หมดเวลา!';
   } else {
-    document.getElementById('gameover-emoji').textContent = '💔';
-    document.getElementById('gameover-title').textContent = 'หมดชีวิต!';
+    state.isHandPresent = false;
+    pointerElement.style.display = 'none';
+    
+    // หากเอามือออกจากรัศมีกล้อง ให้ขยะหลุดจากมือทันที
+    if (state.handDraggingItem) {
+      state.handDraggingItem.el.classList.remove('dragging');
+      state.handDraggingItem.el.classList.add('float-anim');
+      state.handDraggingItem = null;
+    }
   }
-  showScreen('screen-gameover');
 }
 
-function scheduleSpawn() {
-  const delay = Math.max(1200, 2800 - state.level * 200);
-  spawnItem();
-  state.spawnInterval = setInterval(() => {
-    if(!state.gameActive) return;
-    const maxItems = 2 + Math.floor(state.level / 2);
-    if(state.items.length < maxItems) spawnItem();
-  }, delay);
-}
-
-function spawnItem() {
-  const canvas = document.getElementById('game-canvas');
-  const W = canvas.offsetWidth, H = canvas.offsetHeight;
-  const pool = getTrashPool();
-  const data = pool[Math.floor(Math.random() * pool.length)];
-
-  const id = 'item_' + Date.now() + Math.random();
-  const x = 60 + Math.random() * (W - 120);
-  const y = 100 + Math.random() * (H - 280);
-
-  const el = document.createElement('div');
-  el.className = 'trash-item float-anim';
-  el.id = id;
-  el.textContent = data.emoji;
-  el.style.left = x + 'px';
-  el.style.top = y + 'px';
-  el.style.animationDelay = (Math.random() * 2) + 's';
-  el.style.zIndex = 30 + state.items.length;
-
-  const item = { id, data, x, y, el };
-  state.items.push(item);
-  canvas.appendChild(el);
-
-  setupDrag(el, item);
-  if(!state.selectedItem) selectItem(item);
-}
-
-function getTrashPool() {
-  if(state.level <= 2) return TRASH_DATA.filter(t => ['recycle','general'].includes(t.type));
-  if(state.level <= 4) return TRASH_DATA.filter(t => t.type !== 'hazard');
-  return TRASH_DATA;
-}
-
-function setupDrag(el, item) {
-  el.addEventListener('mousedown', (e) => startDrag(e, el, item, e.clientX, e.clientY));
-  el.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    const t = e.touches[0];
-    startDrag(e, el, item, t.clientX, t.clientY);
-  }, { passive: false });
-}
-
-function startDrag(e, el, item, cx, cy) {
-  if(!state.gameActive) return;
-  const rect = el.getBoundingClientRect();
-  state.dragEl = el;
-  state.dragItem = item;
-  state.dragOffX = cx - rect.left - rect.width/2;
-  state.dragOffY = cy - rect.top - rect.height/2;
-  state.isDragging = true;
-
-  el.classList.remove('float-anim');
-  el.classList.add('dragging');
-  el.style.zIndex = 200;
-  selectItem(item);
-}
-
-document.addEventListener('mousemove', (e) => onDragMove(e.clientX, e.clientY));
-document.addEventListener('touchmove', (e) => {
-  if(state.isDragging) {
-    e.preventDefault();
-    const t = e.touches[0];
-    onDragMove(t.clientX, t.clientY);
-  }
-}, { passive: false });
-
-function onDragMove(cx, cy) {
-  if(!state.isDragging || !state.dragEl) return;
-  const canvas = document.getElementById('game-canvas');
-  const rect = canvas.getBoundingClientRect();
-  const x = cx - rect.left - state.dragOffX;
-  const y = cy - rect.top - state.dragOffY;
-  state.dragEl.style.left = x + 'px';
-  state.dragEl.style.top = y + 'px';
-  state.dragItem.x = x;
-  state.dragItem.y = y;
-}
-
-document.addEventListener('mouseup', (e) => onDragEnd(e.clientX, e.clientY));
-document.addEventListener('touchend', (e) => {
-  if(state.isDragging && e.changedTouches.length > 0) {
-    const t = e.changedTouches[0];
-    onDragEnd(t.clientX, t.clientY);
-  }
+// ผูกระบบกล้องเว็บแคมเข้ากับ AI ประมวลผลลูป
+const camera = new Camera(videoElement, {
+  onFrame: async () => {
+    await hands.send({ image: videoElement });
+  },
+  width: 1280, height: 720
+});
+camera.start().catch(() => {
+  document.getElementById('cam-status').textContent = '⚠️ ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบสิทธิ์กล้องถ่ายรูป';
 });
 
-function onDragEnd(cx, cy) {
-  if(!state.isDragging || !state.dragItem) return;
-  state.isDragging = false;
+// --- 🎮 ฟังก์ชันคุมการลากขยะผ่านมือจริง ---
+function handleHandInteraction() {
+  // เคสที่ 1: นิ้วกำลังจับลากขยะอยู่ -> ย้ายพิกัดขยะตามนิ้ว
+  if (state.handDraggingItem) {
+    const item = state.handDraggingItem;
+    item.x = state.handX - 25;
+    item.y = state.handY - 25;
+    item.el.style.left = item.x + 'px';
+    item.el.style.top = item.y + 'px';
 
-  const binType = getBinAtPoint(cx, cy);
-  if(binType) {
-    dropOnBin(state.dragItem, binType, cx, cy);
-  } else {
-    state.dragEl.classList.remove('dragging');
-    state.dragEl.classList.add('float-anim');
-  }
-  state.dragEl = null;
-  state.dragItem = null;
-}
-
-function getBinAtPoint(cx, cy) {
-  const binsBar = document.getElementById('bins-bar');
-  const barRect = binsBar.getBoundingClientRect();
-  if(cy < barRect.top - 20) return null;
-
-  const bins = binsBar.querySelectorAll('.bin');
-  for(let bin of bins) {
-    const r = bin.getBoundingClientRect();
-    if(cx >= r.left - 10 && cx <= r.right + 10) {
-      return bin.dataset.type;
+    // เช็คว่าลากมาโดนโซนถังขยะด้านล่างรึยัง
+    const binType = checkBinCollision(state.handX, state.handY);
+    if (binType) {
+      dropOnBin(item, binType, state.handX, state.handY);
+      state.handDraggingItem = null;
     }
-  }
-  if(cy >= barRect.top - 40) {
-    let closest = null, minDist = Infinity;
-    bins.forEach(bin => {
-      const r = bin.getBoundingClientRect();
-      const mx = (r.left + r.right) / 2;
-      const d = Math.abs(cx - mx);
-      if(d < minDist) { minDist = d; closest = bin.dataset.type; }
-    });
-    return closest;
-  }
-  return null;
-}
-
-function onBinTap(type) {
-  if(!state.gameActive || !state.selectedItem) return;
-  const binEl = document.querySelector(`.bin[data-type="${type}"]`);
-  const rect = binEl.getBoundingClientRect();
-  const cx = (rect.left + rect.right) / 2;
-  const cy = (rect.top + rect.bottom) / 2;
-  dropOnBin(state.selectedItem, type, cx, cy);
-}
-
-function dropOnBin(item, binType, cx, cy) {
-  const correct = item.data.type === binType;
-
-  removeItem(item);
-  flashBin(binType, correct);
-  showScorePopup(cx, cy - 60, correct);
-
-  if(correct) {
-    state.combo++;
-    if(state.combo > state.maxCombo) state.maxCombo = state.combo;
-    const pts = 10 * state.level + (state.combo > 2 ? state.combo * 5 : 0);
-    state.score += pts;
-    state.correct++;
-    state.binCounts[binType]++;
-    state.levelItemsCollected++;
-
-    if(state.combo >= 3) showCombo(state.combo);
-    if(state.levelItemsCollected >= state.levelItemsNeeded) {
-      triggerLevelUp();
-      return;
-    }
-  } else {
-    state.combo = 0;
-    hideCombo();
-    state.lives--;
-    state.wrong++;
-    if(state.lives <= 0) {
-      endGame('lives');
-      return;
-    }
-  }
-  updateHUD();
-  updateActivePanel();
-}
-
-function removeItem(item) {
-  item.el.classList.add('collected');
-  item.el.classList.remove('float-anim', 'dragging');
-  setTimeout(() => item.el.remove(), 300);
-  state.items = state.items.filter(i => i.id !== item.id);
-  if(state.selectedItem && state.selectedItem.id === item.id) {
-    state.selectedItem = state.items[0] || null;
-  }
-}
-
-function triggerLevelUp() {
-  state.gameActive = false;
-  clearInterval(state.spawnInterval);
-  clearInterval(state.timerInterval);
-  document.getElementById('game-canvas').innerHTML = '';
-  state.items = [];
-  document.getElementById('levelup-text').textContent = `ด่าน ${state.level} สำเร็จ! 🎉`;
-  showScreen('screen-levelup');
-}
-
-function selectItem(item) {
-  state.selectedItem = item;
-  updateActivePanel();
-}
-
-function updateActivePanel() {
-  const panel = document.getElementById('active-item-panel');
-  if(state.selectedItem) {
-    panel.classList.remove('hidden');
-    document.getElementById('active-emoji').textContent = state.selectedItem.data.emoji;
-    document.getElementById('active-name').textContent = state.selectedItem.data.name;
-    const typeNames = {recycle:'ถังรีไซเคิล ♻️', organic:'ถังเศษอาหาร 🌿', hazard:'ถังอันตราย ☣️', general:'ถังทั่วไป 🗑️'};
-    document.getElementById('active-hint').textContent = '→ ' + typeNames[state.selectedItem.data.type];
-  } else {
-    panel.classList.add('hidden');
-  }
-}
-
-function flashBin(type, correct) {
-  const bin = document.querySelector(`.bin[data-type="${type}"]`);
-  if(!bin) return;
-  bin.classList.remove('correct-flash','wrong-flash','highlight');
-  void bin.offsetWidth;
-  bin.classList.add(correct ? 'correct-flash' : 'wrong-flash');
-  setTimeout(() => bin.classList.remove('correct-flash','wrong-flash'), 500);
-}
-
-function showScorePopup(x, y, correct) {
-  const pop = document.createElement('div');
-  pop.className = 'score-popup';
-  pop.style.left = x + 'px';
-  pop.style.top = y + 'px';
-
-  if(correct) {
-    const pts = 10 * state.level + (state.combo >= 3 ? state.combo * 5 : 0);
-    pop.textContent = '+' + pts;
-    pop.style.color = '#00ff88';
-  } else {
-    pop.textContent = '❌ ผิด!';
-    pop.style.color = '#ff4444';
-  }
-  document.getElementById('ui-layer').appendChild(pop);
-  setTimeout(() => pop.remove(), 1000);
-}
-
-function showCombo(n) {
-  const cd = document.getElementById('combo-display');
-  const msgs = ['','','','🔥 COMBO x3!','🔥🔥 COMBO x4!','💥 COMBO x5!','🌟 SUPER COMBO!'];
-  cd.textContent = msgs[Math.min(n, msgs.length-1)] || `⚡ COMBO x${n}!`;
-  cd.classList.remove('show');
-  void cd.offsetWidth;
-  cd.classList.add('show');
-  clearTimeout(state.comboTimer);
-  state.comboTimer = setTimeout(hideCombo, 2000);
-}
-
-function hideCombo() {
-  document.getElementById('combo-display').classList.remove('show');
-}
-
-requestCamera();
-showScreen('screen-start');
-</script>
-</body>
-</html>
+  } 
+  // เคสที่ 2: นิ้วว่าง
