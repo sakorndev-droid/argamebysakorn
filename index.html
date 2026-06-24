@@ -688,8 +688,8 @@ function onBinTap(type) {
   if(!state.gameActive || !state.selectedItem) return;
   const binEl = document.querySelector(`.bin[data-type="${type}"]`);
   const rect = binEl.getBoundingClientRect();
-  const cx = (rect.left + r.right) / 2;
-  const cy = (rect.top + r.bottom) / 2;
+  const cx = (rect.left + rect.right) / 2;
+  const cy = (rect.top + rect.bottom) / 2;
   dropOnBin(state.selectedItem, type, cx, cy);
 }
 
