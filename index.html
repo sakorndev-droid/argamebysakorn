@@ -260,4 +260,162 @@ function handleHandInteraction() {
       state.handDraggingItem = null;
     }
   } 
-  // เคสที่ 2: นิ้วว่าง
+  // เคสที่ 2: นิ้วว่างอยู่ -> ตรวจจับว่าขยับไปชนโดนขยะตัวไหนไหมเพื่อทำการหยิบ
+  else {
+    state.items.forEach(item => {
+      const distance = Math.hypot(state.handX - (item.x + 25), state.handY - (item.y + 25));
+      if (distance < 55) { // รัศมีสัมผัส 55 พิกเซล
+        state.handDraggingItem = item;
+        item.el.classList.remove('float-anim');
+        item.el.classList.add('dragging');
+        selectItem(item);
+      }
+    });
+  }
+}
+
+// ตรวจสอบการชนกับถังขยะด้านล่าง
+function checkBinCollision(cx, cy) {
+  const binsBar = document.getElementById('bins-bar');
+  const barRect = binsBar.getBoundingClientRect();
+  if (cy < barRect.top) return null;
+
+  const bins = binsBar.querySelectorAll('.bin');
+  for (let bin of bins) {
+    const r = bin.getBoundingClientRect();
+    if (cx >= r.left && cx <= r.right) {
+      return bin.dataset.type;
+    }
+  }
+  return null;
+}
+
+// --- 🎲 ระบบจัดการเกมเพลย์ ---
+function showScreen(id) {
+  ['screen-start', 'screen-gameover'].forEach(s => document.getElementById(s).classList.add('hidden'));
+  if(id) document.getElementById(id).classList.remove('hidden');
+}
+
+function updateHUD() {
+  document.getElementById('score-val').textContent = state.score;
+  document.getElementById('timer-val').textContent = Math.ceil(state.timeLeft);
+  const lives = document.querySelectorAll('.life-icon');
+  lives.forEach((l, i) => l.classList.toggle('lost', i >= state.lives));
+  Object.keys(state.binCounts).forEach(t => {
+    document.getElementById('count-'+t).textContent = state.binCounts[t];
+  });
+}
+
+function startGame() {
+  showScreen(null);
+  state.score = 0; state.lives = 3; state.timeLeft = 60; state.gameActive = true;
+  state.items = []; state.handDraggingItem = null; state.selectedItem = null;
+  state.binCounts = { recycle:0, organic:0, hazard:0, general:0 };
+  document.getElementById('game-canvas').innerHTML = '';
+  updateHUD();
+  updateActivePanel();
+  
+  clearInterval(state.spawnInterval);
+  clearInterval(state.timerInterval);
+  
+  // ลูปนับเวลาถอยหลัง
+  state.timerInterval = setInterval(() => {
+    if(!state.gameActive) return;
+    state.timeLeft -= 1;
+    updateHUD();
+    if(state.timeLeft <= 0) endGame();
+  }, 1000);
+
+  // ลูปสุ่มปล่อยขยะ
+  state.spawnInterval = setInterval(() => {
+    if(!state.gameActive || state.items.length >= 4) return;
+    spawnItem();
+  }, 2000);
+}
+
+function spawnItem() {
+  const canvas = document.getElementById('game-canvas');
+  const data = TRASH_DATA[Math.floor(Math.random() * TRASH_DATA.length)];
+  const id = 'item_' + Date.now();
+  
+  const x = 60 + Math.random() * (window.innerWidth - 120);
+  const y = 120 + Math.random() * (window.innerHeight - 320);
+
+  const el = document.createElement('div');
+  el.className = 'trash-item float-anim';
+  el.id = id;
+  el.textContent = data.emoji;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+
+  const item = { id, data, x, y, el };
+  state.items.push(item);
+  canvas.appendChild(el);
+  if(!state.selectedItem) selectItem(item);
+}
+
+function dropOnBin(item, binType, cx, cy) {
+  const correct = item.data.type === binType;
+  item.el.classList.add('collected');
+  setTimeout(() => item.el.remove(), 300);
+  
+  state.items = state.items.filter(i => i.id !== item.id);
+  state.selectedItem = state.items[0] || null;
+
+  flashBin(binType, correct);
+  showScorePopup(cx, cy, correct);
+
+  if(correct) {
+    state.score += 10;
+    state.binCounts[binType]++;
+  } else {
+    state.lives--;
+    if(state.lives <= 0) endGame();
+  }
+  updateHUD();
+  updateActivePanel();
+}
+
+function selectItem(item) {
+  state.selectedItem = item;
+  updateActivePanel();
+}
+
+function updateActivePanel() {
+  const panel = document.getElementById('active-item-panel');
+  if(state.selectedItem) {
+    panel.classList.remove('hidden');
+    document.getElementById('active-emoji').textContent = state.selectedItem.data.emoji;
+    document.getElementById('active-name').textContent = state.selectedItem.data.name;
+  } else {
+    panel.classList.add('hidden');
+  }
+}
+
+function flashBin(type, correct) {
+  const bin = document.querySelector(`.bin[data-type="${type}"]`);
+  if(!bin) return;
+  bin.classList.add(correct ? 'correct-flash' : 'wrong-flash');
+  setTimeout(() => bin.classList.remove('correct-flash', 'wrong-flash'), 400);
+}
+
+function showScorePopup(x, y, correct) {
+  const pop = document.createElement('div');
+  pop.className = 'score-popup';
+  pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  pop.textContent = correct ? '+10 คะแนน' : '❌ ผิดประเภท!';
+  pop.style.color = correct ? '#00ff88' : '#ff4444';
+  document.body.appendChild(pop);
+  setTimeout(() => pop.remove(), 1000);
+}
+
+function endGame() {
+  state.gameActive = false;
+  clearInterval(state.spawnInterval);
+  clearInterval(state.timerInterval);
+  document.getElementById('final-score').textContent = state.score;
+  showScreen('screen-gameover');
+}
+</script>
+</body>
+</html>
